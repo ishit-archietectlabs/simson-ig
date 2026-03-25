@@ -1,0 +1,16 @@
+{
+  "integration": "mdi:phone-ring-outline",
+  "entity": {
+    "sensor": {
+      "connection": {
+        "default": "mdi:lan-connect"
+      },
+      "call_state": {
+        "default": "mdi:phone"
+      },
+      "calls_count": {
+        "default": "mdi:phone-log"
+      }
+    }
+  }
+}
