@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.core import HomeAssistant  # noqa: F401
 
 from .const import DOMAIN, CONF_ADDON_URL, DEFAULT_ADDON_URL
 
@@ -17,8 +19,8 @@ class SimsonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(
-        self, user_input: dict | None = None
-    ) -> FlowResult:
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         """Handle the initial step — enter addon URL."""
         errors: dict[str, str] = {}
 
@@ -57,11 +59,13 @@ class SimsonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_hassio(self, discovery_info: dict) -> FlowResult:
+    async def async_step_hassio(
+        self, discovery_info: Any
+    ) -> config_entries.ConfigFlowResult:
         """Handle Supervisor add-on discovery."""
-        addon_url = f"http://localhost:{discovery_info.get('port', 8099)}"
+        port = getattr(discovery_info, "port", None) or discovery_info.get("port", 8099)
+        addon_url = f"http://localhost:{port}"
 
-        # Check if already configured.
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
