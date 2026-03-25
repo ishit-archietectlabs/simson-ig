@@ -47,7 +47,7 @@ class SimsonBaseSensor(CoordinatorEntity, SensorEntity):
         return {
             "identifiers": {(DOMAIN, self._entry.entry_id)},
             "name": f"Simson {node_id}",
-            "manufacturer": "Wirsy",
+            "manufacturer": "ArchitechLabs",
             "model": "Simson Call Relay",
             "sw_version": "1.0.0",
         }
