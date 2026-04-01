@@ -13,6 +13,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.components.http import StaticPathConfig
 
 from .api import SimsonApiClient
 from .const import (
@@ -35,37 +36,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Simson from a config entry."""
     client = SimsonApiClient(entry.data[CONF_ADDON_URL])
 
-    # Verify connectivity.
     try:
-        await client.health()
-    except Exception as err:
+        # Verify connectivity.
+        try:
+            await client.health()
+        except Exception as err:
+            raise ConfigEntryNotReady(f"Cannot connect to Simson addon: {err}") from err
+
+        # Serve the Lovelace card JS.
+        # After setup, add it once in HA: Settings → Dashboards → ⋮ → Resources
+        #   URL: /simson/www/simson-card.js   Type: JavaScript module
+        await hass.http.async_register_static_paths([
+            StaticPathConfig(
+                "/simson/www",
+                str(Path(__file__).parent / "www"),
+                cache_headers=False,
+            )
+        ])
+
+        coordinator = SimsonCoordinator(hass, client)
+        await coordinator.async_config_entry_first_refresh()
+
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+            "client": client,
+            "coordinator": coordinator,
+        }
+
+        await hass.config_entries.async_forward_entry_setups(
+            entry, [Platform.SENSOR]
+        )
+
+        # Register services.
+        _register_services(hass, client)
+
+    except Exception:
         await client.close()
-        raise ConfigEntryNotReady(f"Cannot connect to Simson addon: {err}") from err
-
-    # Serve the Lovelace card JS as a static resource.
-    # The path /simson/www/simson-card.js is stable and predictable.
-    # Users must add it once in HA: Settings → Dashboards → ⋮ → Resources
-    #   URL: /simson/www/simson-card.js   Type: JavaScript module
-    hass.http.register_static_path(
-        "/simson/www",
-        str(Path(__file__).parent / "www"),
-        cache_headers=False,
-    )
-
-    coordinator = SimsonCoordinator(hass, client)
-    await coordinator.async_config_entry_first_refresh()
-
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "client": client,
-        "coordinator": coordinator,
-    }
-
-    await hass.config_entries.async_forward_entry_setups(
-        entry, [Platform.SENSOR]
-    )
-
-    # Register services.
-    _register_services(hass, client)
+        raise
 
     return True
 
