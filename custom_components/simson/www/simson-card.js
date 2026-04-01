@@ -1,18 +1,28 @@
 /**
- * Simson Call Relay — Lovelace Card
+ * Simson Call Relay — Lovelace Card v2.0.0
  *
- * Config example:
+ * Full WebRTC voice calling between HA instances.
+ *
+ * Config:
  *   type: custom:simson-card
- *   node_id: living_room          # matches your node_id in addon config
- *   target_node_id: office        # default dial target (optional)
- *   title: Simson                 # card title (optional)
+ *   node_id: living_room
+ *   target_node_id: office        # optional default dial target
+ *   title: Simson                 # optional
+ *   addon_url: http://host:8799   # optional, auto-detected
  */
 
-const VERSION = "1.0.1";
+const VERSION = "2.0.0";
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// Free STUN servers for NAT traversal.
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+];
+
 const STYLES = `
   :host { display: block; }
+
   .card {
     background: var(--ha-card-background, var(--card-background-color, #1c1c1e));
     border-radius: var(--ha-card-border-radius, 12px);
@@ -21,53 +31,37 @@ const STYLES = `
     color: var(--primary-text-color, #e1e1e1);
     box-shadow: var(--ha-card-box-shadow, none);
   }
+
   .header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 14px;
+    display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
   }
-  .header-icon {
-    width: 36px; height: 36px;
-    background: #03a9f422;
-    border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 20px;
-  }
+  .header-icon { width: 36px; height: 36px; background: #03a9f422; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 20px; }
   .header-title { font-size: 16px; font-weight: 600; flex: 1; }
-  .badge {
-    font-size: 11px; font-weight: 700; padding: 2px 9px;
-    border-radius: 10px; text-transform: uppercase; letter-spacing: .5px;
-  }
+
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 10px;
+    text-transform: uppercase; letter-spacing: .5px; }
   .badge-ok   { background: #1b5e2088; color: #a5d6a7; border: 1px solid #a5d6a740; }
   .badge-err  { background: #b71c1c88; color: #ef9a9a; border: 1px solid #ef9a9a40; }
-  .badge-warn { background: #e65100aa; color: #ffcc80; border: 1px solid #ffcc8040; }
 
-  /* Dial pad */
+  /* Dial section */
   .dial-section { margin-bottom: 14px; }
-  .dial-label { font-size: 11px; color: var(--secondary-text-color, #888); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+  .dial-label { font-size: 11px; color: var(--secondary-text-color, #888);
+    margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
   .input-row { display: flex; gap: 8px; }
   .node-input {
-    flex: 1;
-    background: #2a2a2a;
-    border: 1px solid #444;
-    border-radius: 8px;
-    padding: 9px 12px;
-    color: var(--primary-text-color, #e1e1e1);
-    font-size: 14px;
-    outline: none;
-    transition: border-color .2s;
+    flex: 1; background: #2a2a2a; border: 1px solid #444; border-radius: 8px;
+    padding: 9px 12px; color: var(--primary-text-color, #e1e1e1); font-size: 14px;
+    outline: none; transition: border-color .2s;
   }
   .node-input:focus { border-color: #03a9f4; }
   .node-input[disabled] { opacity: .5; cursor: not-allowed; }
 
   /* Buttons */
   .btn {
-    border: none; border-radius: 8px; padding: 9px 16px;
-    font-size: 13px; font-weight: 600; cursor: pointer;
-    transition: opacity .15s, transform .1s;
-    display: flex; align-items: center; gap: 6px;
-    white-space: nowrap;
+    border: none; border-radius: 8px; padding: 9px 16px; font-size: 13px;
+    font-weight: 600; cursor: pointer; transition: opacity .15s, transform .1s;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap;
   }
   .btn:active { transform: scale(.96); }
   .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
@@ -75,18 +69,16 @@ const STYLES = `
   .btn-answer { background: #1565c0; color: #fff; }
   .btn-reject { background: #b71c1c; color: #fff; }
   .btn-hangup { background: #b71c1c; color: #fff; }
+  .btn-mute   { background: #444; color: #fff; min-width: 44px; justify-content: center; }
+  .btn-mute.muted { background: #e65100; }
 
-  /* Active call panel */
+  /* Call panel */
   .call-panel {
-    background: #1a2940;
-    border: 1px solid #1565c044;
-    border-radius: 10px;
-    padding: 12px 14px;
-    margin-bottom: 14px;
+    background: #1a2940; border: 1px solid #1565c044; border-radius: 10px;
+    padding: 12px 14px; margin-bottom: 14px;
   }
   .call-panel.incoming {
-    background: #1a2700;
-    border-color: #33691e55;
+    background: #1a2700; border-color: #33691e55;
     animation: pulse-incoming 1.5s infinite;
   }
   @keyframes pulse-incoming {
@@ -95,35 +87,66 @@ const STYLES = `
   }
   .call-who { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
   .call-meta { font-size: 12px; color: #888; margin-bottom: 10px; }
-  .call-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .call-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
-  /* Timer */
   .timer { font-size: 12px; color: #888; font-variant-numeric: tabular-nums; }
 
-  /* Divider */
+  /* Audio quality indicator */
+  .quality-bar { display: flex; gap: 2px; align-items: flex-end; height: 14px; margin-left: auto; }
+  .quality-bar .bar { width: 3px; background: #4caf50; border-radius: 1px; transition: background .3s; }
+  .quality-bar .bar.weak { background: #f44336; }
+  .quality-bar .bar.fair { background: #ff9800; }
+
   hr { border: none; border-top: 1px solid #333; margin: 14px 0; }
 
-  /* Status row */
   .status-row {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 12px; color: var(--secondary-text-color, #888);
+    display: flex; align-items: center; gap: 8px; font-size: 12px;
+    color: var(--secondary-text-color, #888);
   }
   .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .dot-ok  { background: #4caf50; }
   .dot-err { background: #f44336; }
+
+  .mic-denied {
+    background: #b71c1c33; border: 1px solid #f4433633; border-radius: 8px;
+    padding: 10px 14px; font-size: 13px; color: #ef9a9a; margin-bottom: 14px;
+  }
 `;
 
-// ── Card element ──────────────────────────────────────────────────────────────
 class SimsonCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this._config = {};
     this._hass = null;
-    this._interval = null;
+    this._targetInput = "";
+
+    // WebRTC state
+    this._pc = null;
+    this._localStream = null;
+    this._remoteAudio = null;
+    this._muted = false;
+    this._micAllowed = null; // null=unknown, true=allowed, false=denied
+    this._audioQuality = 3; // 0-3 bars
+    this._statsInterval = null;
+
+    // SSE
+    this._sse = null;
+    this._sseRetryTimer = null;
+
+    // Call timer
     this._callStart = null;
     this._timerInterval = null;
-    this._targetInput = "";
+
+    // Current call context for WebRTC
+    this._currentCallId = null;
+    this._currentRemoteNode = null;
+    this._isInitiator = false;
+    this._pendingCandidates = [];
+
+    // Ringtone
+    this._ringCtx = null;
+    this._ringLoop = null;
   }
 
   setConfig(config) {
@@ -132,6 +155,7 @@ class SimsonCard extends HTMLElement {
       title: config.title || "Simson",
       node_id: config.node_id,
       target_node_id: config.target_node_id || "",
+      addon_url: config.addon_url || "",
     };
     this._targetInput = this._config.target_node_id;
     this._render();
@@ -143,70 +167,329 @@ class SimsonCard extends HTMLElement {
   }
 
   connectedCallback() {
-    // Timer tick every second for call duration display.
     this._timerInterval = setInterval(() => this._updateTimer(), 1000);
+    this._connectSSE();
   }
 
   disconnectedCallback() {
     clearInterval(this._timerInterval);
+    this._disconnectSSE();
+    this._cleanupWebRTC();
   }
 
-  // ── Data helpers ─────────────────────────────────────────────────────────
+  // ── Addon API base URL ───────────────────────────────────────────────
+
+  _addonBase() {
+    if (this._config.addon_url) return this._config.addon_url;
+    return `http://${location.hostname}:8799`;
+  }
+
+  // ── SSE — real-time events from addon ────────────────────────────────
+
+  _connectSSE() {
+    this._disconnectSSE();
+    const url = `${this._addonBase()}/api/events`;
+    try {
+      this._sse = new EventSource(url);
+      this._sse.onmessage = (ev) => this._handleSSE(JSON.parse(ev.data));
+      this._sse.onerror = () => {
+        this._sse?.close();
+        this._sse = null;
+        this._sseRetryTimer = setTimeout(() => this._connectSSE(), 5000);
+      };
+    } catch (e) {
+      console.warn("Simson SSE connect failed:", e);
+    }
+  }
+
+  _disconnectSSE() {
+    if (this._sseRetryTimer) { clearTimeout(this._sseRetryTimer); this._sseRetryTimer = null; }
+    if (this._sse) { this._sse.close(); this._sse = null; }
+  }
+
+  _handleSSE(event) {
+    switch (event.type) {
+      case "incoming_call":
+        this._currentCallId = event.call_id;
+        this._currentRemoteNode = event.from_node_id;
+        this._isInitiator = false;
+        this._playRingtone();
+        this._render();
+        break;
+
+      case "call_status":
+        if (event.status === "active") {
+          this._currentCallId = event.call_id;
+          this._currentRemoteNode = event.remote_node_id;
+          this._callStart = Date.now();
+          this._startWebRTC();
+        } else if (event.status === "ended" || event.status === "failed") {
+          this._stopRingtone();
+          this._cleanupWebRTC();
+          this._callStart = null;
+          this._currentCallId = null;
+          this._currentRemoteNode = null;
+        }
+        this._render();
+        break;
+
+      case "webrtc_signal":
+        this._handleWebRTCSignal(event);
+        break;
+    }
+  }
+
+  // ── Data helpers (HA entity state) ───────────────────────────────────
 
   _entity(suffix) {
     return this._hass?.states[`sensor.simson_${this._config.node_id}_${suffix}`];
   }
-
+  _val(suffix, fallback = "unknown") {
+    return this._entity(suffix)?.state ?? fallback;
+  }
   _attr(suffix, key, fallback = null) {
     return this._entity(suffix)?.attributes?.[key] ?? fallback;
   }
 
-  _val(suffix, fallback = "unknown") {
-    return this._entity(suffix)?.state ?? fallback;
-  }
-
   _isConnected() { return this._val("connection") === "connected"; }
-
   _callState() { return this._val("call_state", "idle"); }
-
   _activeCallAttr(key, fallback = "") {
     return this._attr("call_state", key, fallback);
   }
 
-  // ── HA service calls ─────────────────────────────────────────────────────
+  // ── HA service calls ─────────────────────────────────────────────────
 
   async _callService(service, data = {}) {
     if (!this._hass) return;
     await this._hass.callService("simson", service, data);
-    // Re-render after a brief delay for state to propagate.
     setTimeout(() => this._render(), 600);
   }
 
   _dial() {
-    const target = this._root().querySelector("#target-input")?.value?.trim();
+    const root = this._root();
+    const target = root.querySelector("#target-input")?.value?.trim();
     if (!target) return;
-    this._callStart = Date.now();
+    this._isInitiator = true;
+    this._currentRemoteNode = target;
+    this._callStart = null;
     this._callService("make_call", { target_node_id: target, call_type: "voice" });
   }
 
   _answer() {
-    const callId = this._activeCallAttr("call_id");
+    const callId = this._activeCallAttr("call_id") || this._currentCallId;
+    this._stopRingtone();
     this._callStart = Date.now();
     this._callService("answer_call", { call_id: callId });
   }
 
   _reject() {
-    const callId = this._activeCallAttr("call_id");
+    const callId = this._activeCallAttr("call_id") || this._currentCallId;
+    this._stopRingtone();
     this._callService("reject_call", { call_id: callId, reason: "declined" });
   }
 
   _hangup() {
-    const callId = this._activeCallAttr("call_id");
+    const callId = this._activeCallAttr("call_id") || this._currentCallId;
     this._callStart = null;
+    this._cleanupWebRTC();
     this._callService("hangup_call", { call_id: callId });
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  _toggleMute() {
+    this._muted = !this._muted;
+    if (this._localStream) {
+      this._localStream.getAudioTracks().forEach(t => { t.enabled = !this._muted; });
+    }
+    this._render();
+  }
+
+  // ── WebRTC ───────────────────────────────────────────────────────────
+
+  async _startWebRTC() {
+    if (this._pc) return;
+
+    // Get microphone.
+    try {
+      this._localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this._micAllowed = true;
+    } catch (e) {
+      console.error("Microphone access denied:", e);
+      this._micAllowed = false;
+      this._render();
+      return;
+    }
+
+    // Create peer connection.
+    this._pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    this._pendingCandidates = [];
+
+    // Add local audio tracks.
+    this._localStream.getTracks().forEach(track => {
+      this._pc.addTrack(track, this._localStream);
+    });
+
+    // Remote audio element.
+    this._remoteAudio = new Audio();
+    this._remoteAudio.autoplay = true;
+
+    this._pc.ontrack = (ev) => {
+      this._remoteAudio.srcObject = ev.streams[0];
+    };
+
+    // ICE candidates → relay through addon API → VPS → remote node.
+    this._pc.onicecandidate = (ev) => {
+      if (ev.candidate) {
+        this._sendWebRTCSignal("ice-candidate", {
+          candidate: ev.candidate.candidate,
+          sdpMid: ev.candidate.sdpMid,
+          sdpMLineIndex: ev.candidate.sdpMLineIndex,
+        });
+      }
+    };
+
+    // Monitor connection quality.
+    this._pc.onconnectionstatechange = () => {
+      const state = this._pc?.connectionState;
+      if (state === "connected") this._audioQuality = 3;
+      else if (state === "disconnected") this._audioQuality = 1;
+      else if (state === "failed") { this._audioQuality = 0; this._cleanupWebRTC(); }
+      this._render();
+    };
+
+    // Start quality monitoring.
+    this._statsInterval = setInterval(() => this._updateQuality(), 3000);
+
+    // Initiator creates offer, callee waits for offer via SSE.
+    if (this._isInitiator) {
+      const offer = await this._pc.createOffer();
+      await this._pc.setLocalDescription(offer);
+      this._sendWebRTCSignal("offer", { sdp: offer.sdp, type: offer.type });
+    }
+  }
+
+  async _handleWebRTCSignal(event) {
+    const { signal_type, data } = event;
+
+    if (signal_type === "offer") {
+      if (!this._pc) await this._startWebRTC();
+      if (!this._pc) return; // Mic denied.
+      await this._pc.setRemoteDescription(new RTCSessionDescription(data));
+      const answer = await this._pc.createAnswer();
+      await this._pc.setLocalDescription(answer);
+      this._sendWebRTCSignal("answer", { sdp: answer.sdp, type: answer.type });
+      for (const c of this._pendingCandidates) {
+        await this._pc.addIceCandidate(new RTCIceCandidate(c));
+      }
+      this._pendingCandidates = [];
+
+    } else if (signal_type === "answer") {
+      if (this._pc) {
+        await this._pc.setRemoteDescription(new RTCSessionDescription(data));
+        for (const c of this._pendingCandidates) {
+          await this._pc.addIceCandidate(new RTCIceCandidate(c));
+        }
+        this._pendingCandidates = [];
+      }
+
+    } else if (signal_type === "ice-candidate") {
+      if (this._pc && this._pc.remoteDescription) {
+        await this._pc.addIceCandidate(new RTCIceCandidate(data));
+      } else {
+        this._pendingCandidates.push(data);
+      }
+    }
+  }
+
+  _sendWebRTCSignal(signalType, data) {
+    const callId = this._activeCallAttr("call_id") || this._currentCallId;
+    const toNode = this._currentRemoteNode;
+    if (!callId || !toNode) return;
+
+    fetch(`${this._addonBase()}/api/webrtc/signal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        call_id: callId,
+        to_node_id: toNode,
+        signal_type: signalType,
+        data: data,
+      }),
+    }).catch(e => console.warn("WebRTC signal send failed:", e));
+  }
+
+  _cleanupWebRTC() {
+    if (this._statsInterval) { clearInterval(this._statsInterval); this._statsInterval = null; }
+    if (this._pc) { this._pc.close(); this._pc = null; }
+    if (this._localStream) {
+      this._localStream.getTracks().forEach(t => t.stop());
+      this._localStream = null;
+    }
+    if (this._remoteAudio) {
+      this._remoteAudio.srcObject = null;
+      this._remoteAudio = null;
+    }
+    this._muted = false;
+    this._audioQuality = 3;
+    this._pendingCandidates = [];
+    this._stopRingtone();
+  }
+
+  async _updateQuality() {
+    if (!this._pc) return;
+    try {
+      const stats = await this._pc.getStats();
+      let jitter = 0, packetsLost = 0, packetsReceived = 0;
+      stats.forEach(report => {
+        if (report.type === "inbound-rtp" && report.kind === "audio") {
+          jitter = report.jitter || 0;
+          packetsLost = report.packetsLost || 0;
+          packetsReceived = report.packetsReceived || 1;
+        }
+      });
+      const lossRate = packetsLost / Math.max(packetsReceived, 1);
+      if (lossRate > 0.1 || jitter > 0.1) this._audioQuality = 1;
+      else if (lossRate > 0.03 || jitter > 0.05) this._audioQuality = 2;
+      else this._audioQuality = 3;
+      this._render();
+    } catch (e) { /* ignore */ }
+  }
+
+  // ── Ringtone ─────────────────────────────────────────────────────────
+
+  _playRingtone() {
+    this._stopRingtone();
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this._ringCtx = ctx;
+      this._ringLoop = setInterval(() => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = 440;
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.4);
+        setTimeout(() => {
+          const osc2 = ctx.createOscillator();
+          const gain2 = ctx.createGain();
+          osc2.connect(gain2); gain2.connect(ctx.destination);
+          osc2.frequency.value = 480;
+          gain2.gain.setValueAtTime(0.15, ctx.currentTime);
+          gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          osc2.start(ctx.currentTime);
+          osc2.stop(ctx.currentTime + 0.4);
+        }, 200);
+      }, 3000);
+    } catch (e) { /* audio context not available */ }
+  }
+
+  _stopRingtone() {
+    if (this._ringLoop) { clearInterval(this._ringLoop); this._ringLoop = null; }
+    if (this._ringCtx) { this._ringCtx.close().catch(() => {}); this._ringCtx = null; }
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────
 
   _root() { return this.shadowRoot; }
 
@@ -215,46 +498,68 @@ class SimsonCard extends HTMLElement {
 
     const connected = this._isConnected();
     const callState = this._callState();
-    const isIdle      = callState === "idle" || callState === "unknown";
-    const isIncoming  = callState === "incoming";
-    const isRinging   = callState === "requesting" || callState === "ringing";
-    const isActive    = callState === "active";
-    const hasCall     = !isIdle;
+    const isIdle     = callState === "idle" || callState === "unknown";
+    const isIncoming = callState === "incoming";
+    const isRinging  = callState === "requesting" || callState === "ringing";
+    const isActive   = callState === "active";
+    const hasCall    = !isIdle;
+    const hasWebRTC  = !!this._pc;
 
-    const remoteLabel = this._activeCallAttr("remote_label") || this._activeCallAttr("remote_node_id", "Unknown");
-    const callId      = this._activeCallAttr("call_id", "");
-    const direction   = this._activeCallAttr("direction", "");
-    const callType    = this._activeCallAttr("call_type", "voice");
-    const answeredAt  = this._activeCallAttr("answered_at");
+    const remoteLabel = this._activeCallAttr("remote_label") ||
+                        this._activeCallAttr("remote_node_id") ||
+                        this._currentRemoteNode || "Unknown";
+    const callId   = this._activeCallAttr("call_id", "") || this._currentCallId || "";
+    const direction = this._activeCallAttr("direction", "");
 
-    // Sync call timer start from answered_at if available.
-    if (isActive && answeredAt && !this._callStart) {
-      this._callStart = new Date(answeredAt).getTime();
+    // Sync call context.
+    if (callId && !this._currentCallId) this._currentCallId = callId;
+    if (hasCall && !this._currentRemoteNode) {
+      this._currentRemoteNode = this._activeCallAttr("remote_node_id", "");
     }
-    if (isIdle) { this._callStart = null; }
+    if (isActive && !this._callStart) this._callStart = Date.now();
+    if (isIdle) {
+      this._callStart = null;
+      if (this._pc) this._cleanupWebRTC();
+    }
 
     const badgeClass = connected ? "badge-ok" : "badge-err";
     const badgeText  = connected ? "Online" : "Offline";
-
     const connDot    = connected ? "dot-ok" : "dot-err";
     const nodeId     = this._attr("connection", "node_id", this._config.node_id);
     const accountId  = this._attr("connection", "account_id", "");
 
-    // ── HTML ─────────────────────────────────────────────────────────────
+    // Quality bars.
+    const q = this._audioQuality;
+    const barHtml = isActive && hasWebRTC ? `
+      <div class="quality-bar" title="Audio quality">
+        <div class="bar ${q < 1 ? "weak" : ""}" style="height:4px"></div>
+        <div class="bar ${q < 2 ? (q < 1 ? "weak" : "fair") : ""}" style="height:8px"></div>
+        <div class="bar ${q < 3 ? (q < 2 ? "weak" : "fair") : ""}" style="height:12px"></div>
+      </div>` : "";
+
+    // Mic denied warning.
+    const micWarning = this._micAllowed === false
+      ? `<div class="mic-denied">\u{1F3A4} Microphone access denied. Click the lock icon in your browser's address bar to allow microphone access, then reload.</div>`
+      : "";
+
+    // Call panel.
     const callPanelHtml = hasCall ? `
       <div class="call-panel ${isIncoming ? "incoming" : ""}">
-        <div class="call-who">${remoteLabel}</div>
+        <div class="call-who">${this._escapeHtml(remoteLabel)}</div>
         <div class="call-meta">
-          ${direction === "incoming" ? "⬇ Incoming" : "⬆ Outgoing"} · ${callType}
-          ${isActive ? `· <span class="timer" id="call-timer">00:00</span>` : ""}
-          ${isIncoming ? "· Ringing..." : ""}
-          ${isRinging  ? "· Calling..." : ""}
+          ${direction === "incoming" ? "\u2B07 Incoming" : "\u2B06 Outgoing"}
+          ${isActive ? ` \u00B7 <span class="timer" id="call-timer">00:00</span>` : ""}
+          ${isIncoming ? " \u00B7 Ringing..." : ""}
+          ${isRinging  ? " \u00B7 Calling..." : ""}
+          ${barHtml}
         </div>
         <div class="call-actions">
           ${isIncoming
-            ? `<button class="btn btn-answer" id="btn-answer">📞 Answer</button>
-               <button class="btn btn-reject" id="btn-reject">❌ Decline</button>`
-            : `<button class="btn btn-hangup" id="btn-hangup">📴 Hang Up</button>`
+            ? `<button class="btn btn-answer" id="btn-answer">\u{1F4DE} Answer</button>
+               <button class="btn btn-reject" id="btn-reject">\u274C Decline</button>`
+            : `<button class="btn btn-mute ${this._muted ? "muted" : ""}" id="btn-mute"
+                  ${!isActive ? "disabled" : ""}>${this._muted ? "\u{1F507}" : "\u{1F50A}"}</button>
+               <button class="btn btn-hangup" id="btn-hangup">\u{1F4F4} Hang Up</button>`
           }
         </div>
       </div>` : "";
@@ -263,27 +568,24 @@ class SimsonCard extends HTMLElement {
       <style>${STYLES}</style>
       <div class="card">
         <div class="header">
-          <div class="header-icon">📞</div>
-          <div class="header-title">${this._config.title}</div>
+          <div class="header-icon">\u{1F4DE}</div>
+          <div class="header-title">${this._escapeHtml(this._config.title)}</div>
           <span class="badge ${badgeClass}">${badgeText}</span>
         </div>
 
+        ${micWarning}
         ${callPanelHtml}
 
         ${isIdle ? `
         <div class="dial-section">
           <div class="dial-label">Dial</div>
           <div class="input-row">
-            <input
-              id="target-input"
-              class="node-input"
-              type="text"
+            <input id="target-input" class="node-input" type="text"
               placeholder="node_id (e.g. office)"
-              value="${this._targetInput}"
-              ${!connected ? "disabled" : ""}
-            />
+              value="${this._escapeHtml(this._targetInput)}"
+              ${!connected ? "disabled" : ""} />
             <button class="btn btn-call" id="btn-call" ${!connected ? "disabled" : ""}>
-              📞 Call
+              \u{1F4DE} Call
             </button>
           </div>
         </div>` : ""}
@@ -291,11 +593,11 @@ class SimsonCard extends HTMLElement {
         <hr/>
         <div class="status-row">
           <div class="dot ${connDot}"></div>
-          <span>${nodeId}${accountId ? " · " + accountId : ""}</span>
+          <span>${this._escapeHtml(nodeId)}${accountId ? " \u00B7 " + this._escapeHtml(accountId) : ""}</span>
         </div>
       </div>`;
 
-    // Save focus state before wiping DOM so typing isn't interrupted.
+    // Save focus state before DOM replacement.
     const root = this._root();
     const wasInputFocused = root.activeElement?.id === "target-input";
     const selStart = wasInputFocused ? root.querySelector("#target-input")?.selectionStart : null;
@@ -303,24 +605,23 @@ class SimsonCard extends HTMLElement {
 
     root.innerHTML = html;
 
-    // Attach event listeners.
+    // Bind events.
     root.querySelector("#btn-call")?.addEventListener("click", () => this._dial());
     root.querySelector("#btn-answer")?.addEventListener("click", () => this._answer());
     root.querySelector("#btn-reject")?.addEventListener("click", () => this._reject());
     root.querySelector("#btn-hangup")?.addEventListener("click", () => this._hangup());
+    root.querySelector("#btn-mute")?.addEventListener("click", () => this._toggleMute());
 
     const inputEl = root.querySelector("#target-input");
     if (inputEl) {
       inputEl.addEventListener("input", e => { this._targetInput = e.target.value; });
       inputEl.addEventListener("keydown", e => { if (e.key === "Enter") this._dial(); });
-      // Restore focus and cursor position if the input was active during re-render.
       if (wasInputFocused) {
         inputEl.focus();
         inputEl.setSelectionRange(selStart, selEnd);
       }
     }
 
-    // Prime timer if call is active.
     if (isActive) this._updateTimer();
   }
 
@@ -334,13 +635,15 @@ class SimsonCard extends HTMLElement {
     el.textContent = `${m}:${s}`;
   }
 
-  // Config editor stub (required by HA for custom cards to work in UI editor).
-  static getConfigElement() { return document.createElement("div"); }
+  _escapeHtml(str) {
+    if (!str) return "";
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
 
+  static getConfigElement() { return document.createElement("div"); }
   static getStubConfig() {
     return { node_id: "living_room", target_node_id: "", title: "Simson" };
   }
-
   getCardSize() { return 3; }
 }
 
@@ -350,7 +653,7 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "simson-card",
   name: "Simson Call Relay",
-  description: "Dial pad and call control for Simson Call Relay",
+  description: "Voice calling between Home Assistant instances with WebRTC audio",
   preview: false,
   documentationURL: "https://github.com/nitish-mp3/simson-ig",
 });
