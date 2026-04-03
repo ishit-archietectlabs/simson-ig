@@ -145,9 +145,12 @@ class SimsonCard extends HTMLElement {
     this._micAllowed = null; // null=unknown, true=allowed, false=denied
     this._audioQuality = 3; // 0-3 bars
     this._statsInterval = null;
+    this._startingWebRTC = false; // guard against concurrent _startWebRTC calls
 
-    // HA WebSocket event subscription (for WebRTC signals).
+    // HA WebSocket event subscription (for WebRTC signals + call status).
     this._haEventUnsub = null;
+    this._haStatusUnsub = null;
+    this._haIncomingUnsub = null;
     this._haEventSubscribed = false;
 
     // Call timer
@@ -222,29 +225,91 @@ class SimsonCard extends HTMLElement {
   _subscribeHAEvents() {
     if (!this._hass?.connection) return;
     this._haEventSubscribed = true;
+
+    // 1. WebRTC signal relay (SDP offers/answers, ICE candidates).
     this._hass.connection.subscribeEvents(
       (haEvent) => this._onHAWebRTCSignal(haEvent.data),
       "simson_webrtc_signal",
     ).then(unsub => {
       this._haEventUnsub = unsub;
+      console.info("Simson: subscribed to simson_webrtc_signal events");
     }).catch(e => {
-      console.warn("Simson: failed to subscribe to HA events:", e);
+      console.warn("Simson: failed to subscribe to webrtc events:", e);
       this._haEventSubscribed = false;
+    });
+
+    // 2. Call status events — enables INSTANT WebRTC kick-off without
+    //    waiting for the 5-second entity poll cycle.
+    this._hass.connection.subscribeEvents(
+      (haEvent) => this._onHACallStatus(haEvent.data),
+      "simson_call_status",
+    ).then(unsub => {
+      this._haStatusUnsub = unsub;
+      console.info("Simson: subscribed to simson_call_status events");
+    }).catch(e => {
+      console.warn("Simson: failed to subscribe to call_status events:", e);
+    });
+
+    // 3. Incoming call events — faster ringtone start.
+    this._hass.connection.subscribeEvents(
+      (haEvent) => this._onHAIncomingCall(haEvent.data),
+      "simson_incoming_call",
+    ).then(unsub => {
+      this._haIncomingUnsub = unsub;
+      console.info("Simson: subscribed to simson_incoming_call events");
+    }).catch(e => {
+      console.warn("Simson: failed to subscribe to incoming_call events:", e);
     });
   }
 
   _unsubscribeHAEvents() {
-    if (this._haEventUnsub) {
-      this._haEventUnsub();
-      this._haEventUnsub = null;
-    }
+    if (this._haEventUnsub) { this._haEventUnsub(); this._haEventUnsub = null; }
+    if (this._haStatusUnsub) { this._haStatusUnsub(); this._haStatusUnsub = null; }
+    if (this._haIncomingUnsub) { this._haIncomingUnsub(); this._haIncomingUnsub = null; }
     this._haEventSubscribed = false;
   }
 
-  // Called when a simson_webrtc_signal HA event arrives.
-  // event = { call_id, from_node_id, signal_type, data }
+  // ── HA event handlers (real-time, no polling delay) ─────────────────
+
   _onHAWebRTCSignal(event) {
+    console.info("Simson: ← received webrtc signal: %s (call=%s, from=%s)",
+      event.signal_type, event.call_id, event.from_node_id);
     this._handleWebRTCSignal(event);
+  }
+
+  _onHACallStatus(event) {
+    const { call_id, status, direction, remote_node_id } = event;
+    console.info("Simson: ← call_status event: status=%s call=%s dir=%s remote=%s",
+      status, call_id, direction, remote_node_id);
+
+    if (status === "active") {
+      // Call just became active — start WebRTC IMMEDIATELY.
+      this._currentCallId = call_id;
+      this._currentRemoteNode = remote_node_id;
+      this._isInitiator = (direction === "outgoing");
+      if (!this._callStart) this._callStart = Date.now();
+      this._stopRingtone();
+      this._startWebRTC();
+      this._render();
+    } else if (status === "ended" || status === "failed") {
+      this._stopRingtone();
+      this._cleanupWebRTC();
+      this._callStart = null;
+      this._currentCallId = null;
+      this._currentRemoteNode = null;
+      this._render();
+    }
+  }
+
+  _onHAIncomingCall(event) {
+    const { call_id, from_node_id, from_label } = event;
+    console.info("Simson: ← incoming_call event: call=%s from=%s (%s)",
+      call_id, from_node_id, from_label);
+    this._isInitiator = false;
+    this._currentCallId = call_id;
+    this._currentRemoteNode = from_node_id;
+    this._playRingtone();
+    this._render();
   }
 
   // ── Data helpers (HA entity state) ───────────────────────────────────
@@ -315,18 +380,23 @@ class SimsonCard extends HTMLElement {
 
   async _startWebRTC() {
     if (this._pc) return;
-    console.info("Simson: starting WebRTC (initiator=%s, callId=%s)", this._isInitiator, this._currentCallId);
+    if (this._startingWebRTC) return; // guard against concurrent calls
+    this._startingWebRTC = true;
+    console.info("Simson: starting WebRTC (initiator=%s, callId=%s, remoteNode=%s)",
+      this._isInitiator, this._currentCallId, this._currentRemoteNode);
 
     // Check secure context — getUserMedia requires HTTPS (or localhost).
     if (!window.isSecureContext) {
-      console.error("Simson: not a secure context — getUserMedia requires HTTPS");
+      console.error("Simson: not a secure context — getUserMedia requires HTTPS. URL:", location.href);
       this._micAllowed = false;
+      this._startingWebRTC = false;
       this._render();
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
       console.error("Simson: getUserMedia not available on this browser/context");
       this._micAllowed = false;
+      this._startingWebRTC = false;
       this._render();
       return;
     }
@@ -339,6 +409,7 @@ class SimsonCard extends HTMLElement {
     } catch (e) {
       console.error("Simson: microphone access denied:", e);
       this._micAllowed = false;
+      this._startingWebRTC = false;
       this._render();
       return;
     }
@@ -382,23 +453,37 @@ class SimsonCard extends HTMLElement {
 
     this._statsInterval = setInterval(() => this._updateQuality(), 3000);
 
+    this._startingWebRTC = false;
+
     // Initiator creates offer; callee waits for offer via HA event subscription.
     if (this._isInitiator) {
+      console.info("Simson: creating SDP offer...");
       const offer = await this._pc.createOffer();
       await this._pc.setLocalDescription(offer);
+      console.info("Simson: sending SDP offer to %s", this._currentRemoteNode);
       this._sendWebRTCSignal("offer", { sdp: offer.sdp, type: offer.type });
+    } else {
+      console.info("Simson: waiting for SDP offer from remote...");
     }
   }
 
   async _handleWebRTCSignal(event) {
-    const { signal_type, data } = event;
+    const { call_id, from_node_id, signal_type, data } = event;
+
+    // Validate signal belongs to current call.
+    if (call_id && this._currentCallId && call_id !== this._currentCallId) {
+      console.warn("Simson: ignoring signal for different call: %s (current: %s)", call_id, this._currentCallId);
+      return;
+    }
 
     if (signal_type === "offer") {
+      console.info("Simson: received SDP offer from %s", from_node_id);
       if (!this._pc) await this._startWebRTC();
-      if (!this._pc) return; // Mic denied.
+      if (!this._pc) { console.error("Simson: cannot process offer — no PeerConnection"); return; }
       await this._pc.setRemoteDescription(new RTCSessionDescription(data));
       const answer = await this._pc.createAnswer();
       await this._pc.setLocalDescription(answer);
+      console.info("Simson: sending SDP answer to %s", this._currentRemoteNode);
       this._sendWebRTCSignal("answer", { sdp: answer.sdp, type: answer.type });
       for (const c of this._pendingCandidates) {
         await this._pc.addIceCandidate(new RTCIceCandidate(c));
@@ -406,12 +491,15 @@ class SimsonCard extends HTMLElement {
       this._pendingCandidates = [];
 
     } else if (signal_type === "answer") {
+      console.info("Simson: received SDP answer from %s", from_node_id);
       if (this._pc) {
         await this._pc.setRemoteDescription(new RTCSessionDescription(data));
         for (const c of this._pendingCandidates) {
           await this._pc.addIceCandidate(new RTCIceCandidate(c));
         }
         this._pendingCandidates = [];
+      } else {
+        console.warn("Simson: received answer but no PeerConnection exists");
       }
 
     } else if (signal_type === "ice-candidate") {
@@ -419,6 +507,7 @@ class SimsonCard extends HTMLElement {
         await this._pc.addIceCandidate(new RTCIceCandidate(data));
       } else {
         this._pendingCandidates.push(data);
+        console.debug("Simson: buffered ICE candidate (pending: %d)", this._pendingCandidates.length);
       }
     }
   }
@@ -427,14 +516,19 @@ class SimsonCard extends HTMLElement {
   _sendWebRTCSignal(signalType, data) {
     const callId = this._activeCallAttr("call_id") || this._currentCallId;
     const toNode = this._currentRemoteNode;
-    if (!callId || !toNode || !this._hass) return;
+    if (!callId || !toNode || !this._hass) {
+      console.warn("Simson: cannot send signal %s — missing callId=%s toNode=%s hass=%s",
+        signalType, callId, toNode, !!this._hass);
+      return;
+    }
 
+    console.info("Simson: → sending %s signal to %s (call=%s)", signalType, toNode, callId);
     this._hass.callService("simson", "send_webrtc_signal", {
       call_id: callId,
       to_node_id: toNode,
       signal_type: signalType,
       data: data,
-    }).catch(e => console.warn("Simson: WebRTC signal send failed:", e));
+    }).catch(e => console.error("Simson: WebRTC signal send FAILED:", e));
   }
 
   _cleanupWebRTC() {
