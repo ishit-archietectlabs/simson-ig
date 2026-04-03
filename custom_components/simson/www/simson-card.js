@@ -755,6 +755,7 @@ class SimsonCard extends HTMLElement {
         <div class="status-row">
           <div class="dot ${connDot}"></div>
           <span>${this._escapeHtml(nodeId)}${accountId ? " \u00B7 " + this._escapeHtml(accountId) : ""}</span>
+          <span style="margin-left:auto;font-size:10px;opacity:.4;">v${VERSION}</span>
         </div>
       </div>`;
 
