@@ -1,8 +1,10 @@
 /**
- * Simson Call Relay — Lovelace Card v2.4.0
+ * Simson Call Relay — Lovelace Card v3.0.0
  *
  * Full WebRTC voice calling between HA instances.
  * WebRTC signals travel through HA WebSocket (avoids HTTPS→HTTP mixed content).
+ * v3.0.0 additions: Target picker, incoming call popup, browser notifications,
+ *                   new call states (missed, declined, timeout, fallback-redirected).
  *
  * Config:
  *   type: custom:simson-card
@@ -11,7 +13,7 @@
  *   title: Simson                 # optional
  */
 
-const VERSION = "2.4.0";
+const VERSION = "3.0.0";
 
 // Free STUN servers for NAT traversal.
 const ICE_SERVERS = [
@@ -127,6 +129,98 @@ const STYLES = `
   .btn-quick-dial:hover { background: #1e3a5f; }
   .btn-quick-dial:active { transform: scale(.96); }
   .btn-quick-dial:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+  /* Target picker */
+  .target-section { margin-bottom: 14px; }
+  .target-category { margin-bottom: 10px; }
+  .target-category-header {
+    font-size: 11px; color: var(--secondary-text-color, #888);
+    text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .target-category-icon { font-size: 14px; }
+  .target-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btn-target {
+    flex: 1 1 auto; min-width: 110px; background: #1a2940; border: 1px solid #1565c044;
+    color: #90caf9; border-radius: 10px; padding: 12px 14px; font-size: 13px;
+    font-weight: 600; cursor: pointer; transition: background .15s, transform .1s, border-color .15s;
+    display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+  }
+  .btn-target:hover { background: #1e3a5f; border-color: #1565c088; }
+  .btn-target:active { transform: scale(.96); }
+  .btn-target:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+  .btn-target .target-icon { font-size: 22px; }
+  .btn-target .target-label { font-size: 12px; line-height: 1.2; }
+  .btn-target.type-node { border-color: #1565c044; }
+  .btn-target.type-asterisk { border-color: #e6510044; color: #ffcc80; background: #2a1e00; }
+  .btn-target.type-asterisk:hover { background: #3a2800; }
+  .btn-target.type-device { border-color: #2e7d3244; color: #a5d6a7; background: #1a2a1a; }
+  .btn-target.type-device:hover { background: #1e3a1e; }
+  .btn-target.type-queue { border-color: #6a1b9a44; color: #ce93d8; background: #1a1a2a; }
+  .btn-target.type-queue:hover { background: #1e1e3a; }
+
+  .no-targets { color: #666; font-size: 13px; font-style: italic; padding: 8px 0; }
+
+  /* Incoming call popup overlay */
+  .incoming-popup {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85); z-index: 9999;
+    display: flex; align-items: center; justify-content: center;
+    animation: popup-fade-in .3s ease;
+  }
+  @keyframes popup-fade-in {
+    from { opacity: 0; } to { opacity: 1; }
+  }
+  .popup-card {
+    background: #1a1a1a; border: 2px solid #4caf50; border-radius: 20px;
+    padding: 32px 28px; text-align: center; min-width: 280px; max-width: 360px;
+    animation: popup-slide-up .3s ease;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  }
+  @keyframes popup-slide-up {
+    from { transform: translateY(30px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  .popup-avatar { width: 72px; height: 72px; background: #2e7d3233; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 36px;
+    margin: 0 auto 14px; animation: pulse-ring 2s infinite; }
+  @keyframes pulse-ring {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(76,175,80,0.4); }
+    50% { box-shadow: 0 0 0 15px rgba(76,175,80,0); }
+  }
+  .popup-caller { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .popup-type { font-size: 13px; color: #888; margin-bottom: 24px; }
+  .popup-actions { display: flex; gap: 16px; justify-content: center; }
+  .popup-btn {
+    border: none; border-radius: 50%; width: 60px; height: 60px; font-size: 24px;
+    cursor: pointer; transition: transform .15s, box-shadow .15s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .popup-btn:active { transform: scale(.92); }
+  .popup-btn-answer { background: #2e7d32; color: #fff; box-shadow: 0 4px 20px rgba(46,125,50,.4); }
+  .popup-btn-answer:hover { box-shadow: 0 4px 30px rgba(46,125,50,.6); }
+  .popup-btn-decline { background: #b71c1c; color: #fff; box-shadow: 0 4px 20px rgba(183,28,28,.4); }
+  .popup-btn-decline:hover { box-shadow: 0 4px 30px rgba(183,28,28,.6); }
+
+  /* Notification permission banner */
+  .notif-banner {
+    background: #0d47a133; border: 1px solid #2196f333; border-radius: 8px;
+    padding: 10px 14px; font-size: 13px; color: #90caf9; margin-bottom: 14px;
+    display: flex; align-items: center; gap: 8px; line-height: 1.4;
+  }
+  .notif-banner button {
+    background: #1565c0; color: #fff; border: none; border-radius: 6px;
+    padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .notif-banner button:hover { background: #1976d2; }
+
+  /* Fallback indicator */
+  .fallback-badge {
+    display: inline-block; background: #e6510033; color: #ffcc80;
+    border: 1px solid #ff980033; border-radius: 6px;
+    padding: 2px 8px; font-size: 11px; font-weight: 600; margin-left: 8px;
+  }
 `;
 
 class SimsonCard extends HTMLElement {
@@ -159,6 +253,7 @@ class SimsonCard extends HTMLElement {
     this._haEventUnsub = null;
     this._haStatusUnsub = null;
     this._haIncomingUnsub = null;
+    this._haTargetsUnsub = null;
     this._haEventSubscribed = false;
 
     // Call timer
@@ -180,6 +275,21 @@ class SimsonCard extends HTMLElement {
     // Ringtone
     this._ringCtx = null;
     this._ringLoop = null;
+
+    // Target picker state (v3.0.0)
+    this._targets = [];           // loaded from addon API
+    this._targetsLoaded = false;
+    this._targetsLoading = false;
+
+    // Incoming call popup (v3.0.0)
+    this._popupEl = null;         // DOM element for the fullscreen popup
+    this._showPopup = false;
+    this._incomingFrom = "";
+    this._incomingCallType = "";
+
+    // Browser notification (v3.0.0)
+    this._notifPermission = typeof Notification !== "undefined" ? Notification.permission : "denied";
+    this._activeNotification = null;
   }
 
   setConfig(config) {
@@ -212,6 +322,10 @@ class SimsonCard extends HTMLElement {
     if (!this._haEventSubscribed) {
       this._subscribeHAEvents();
     }
+    // Load targets from addon API (once).
+    if (!this._targetsLoaded && !this._targetsLoading) {
+      this._loadTargets();
+    }
     this._render();
   }
 
@@ -226,6 +340,8 @@ class SimsonCard extends HTMLElement {
     clearInterval(this._timerInterval);
     this._unsubscribeHAEvents();
     this._cleanupWebRTC();
+    this._removePopup();
+    this._dismissBrowserNotification();
   }
 
   // ── HA WebSocket event subscription ─────────────────────────────────
@@ -271,12 +387,24 @@ class SimsonCard extends HTMLElement {
     }).catch(e => {
       console.warn("Simson: failed to subscribe to incoming_call events:", e);
     });
+
+    // 4. Targets result — receives response from get_targets service.
+    this._hass.connection.subscribeEvents(
+      (haEvent) => this._onHATargetsResult(haEvent.data),
+      "simson_targets_result",
+    ).then(unsub => {
+      this._haTargetsUnsub = unsub;
+      console.info("Simson: subscribed to simson_targets_result events");
+    }).catch(e => {
+      console.warn("Simson: failed to subscribe to targets_result events:", e);
+    });
   }
 
   _unsubscribeHAEvents() {
     if (this._haEventUnsub) { this._haEventUnsub(); this._haEventUnsub = null; }
     if (this._haStatusUnsub) { this._haStatusUnsub(); this._haStatusUnsub = null; }
     if (this._haIncomingUnsub) { this._haIncomingUnsub(); this._haIncomingUnsub = null; }
+    if (this._haTargetsUnsub) { this._haTargetsUnsub(); this._haTargetsUnsub = null; }
     this._haEventSubscribed = false;
   }
 
@@ -304,10 +432,15 @@ class SimsonCard extends HTMLElement {
         this._polite ? "polite" : "impolite", this._config.node_id, remote_node_id, direction);
       if (!this._callStart) this._callStart = Date.now();
       this._stopRingtone();
+      this._removePopup();
+      this._dismissBrowserNotification();
       this._startWebRTC();
       this._render();
-    } else if (status === "ended" || status === "failed") {
+    } else if (status === "ended" || status === "failed" || status === "missed"
+               || status === "declined" || status === "timeout") {
       this._stopRingtone();
+      this._removePopup();
+      this._dismissBrowserNotification();
       this._cleanupWebRTC();
       this._callStart = null;
       this._currentCallId = null;
@@ -317,13 +450,27 @@ class SimsonCard extends HTMLElement {
   }
 
   _onHAIncomingCall(event) {
-    const { call_id, from_node_id, from_label } = event;
+    const { call_id, from_node_id, from_label, call_type } = event;
     console.info("Simson: ← incoming_call event: call=%s from=%s (%s)",
       call_id, from_node_id, from_label);
     this._currentCallId = call_id;
     this._currentRemoteNode = from_node_id;
+    this._incomingFrom = from_label || from_node_id;
+    this._incomingCallType = call_type || "voice";
     this._playRingtone();
+    this._showIncomingPopup();
+    this._showBrowserNotification(this._incomingFrom, this._incomingCallType);
     this._render();
+  }
+
+  _onHATargetsResult(data) {
+    if (data && Array.isArray(data.targets)) {
+      this._targets = data.targets;
+      this._targetsLoaded = true;
+      this._targetsLoading = false;
+      console.info("Simson: loaded %d targets", this._targets.length);
+      this._render();
+    }
   }
 
   // ── Data helpers (HA entity state) ───────────────────────────────────
@@ -364,6 +511,8 @@ class SimsonCard extends HTMLElement {
   _answer() {
     const callId = this._activeCallAttr("call_id") || this._currentCallId;
     this._stopRingtone();
+    this._removePopup();
+    this._dismissBrowserNotification();
     this._callStart = Date.now();
     this._callService("answer_call", { call_id: callId });
   }
@@ -371,6 +520,8 @@ class SimsonCard extends HTMLElement {
   _reject() {
     const callId = this._activeCallAttr("call_id") || this._currentCallId;
     this._stopRingtone();
+    this._removePopup();
+    this._dismissBrowserNotification();
     this._callService("reject_call", { call_id: callId, reason: "declined" });
   }
 
@@ -603,6 +754,8 @@ class SimsonCard extends HTMLElement {
     this._audioQuality = 3;
     this._pendingCandidates = [];
     this._stopRingtone();
+    this._removePopup();
+    this._dismissBrowserNotification();
   }
 
   async _updateQuality() {
@@ -660,6 +813,156 @@ class SimsonCard extends HTMLElement {
     if (this._ringCtx) { this._ringCtx.close().catch(() => {}); this._ringCtx = null; }
   }
 
+  // ── Target loading ───────────────────────────────────────────────────
+
+  async _loadTargets() {
+    if (!this._hass || this._targetsLoading) return;
+    this._targetsLoading = true;
+    try {
+      // Call the get_targets service which fires a simson_targets_result event.
+      await this._hass.callService("simson", "get_targets", {});
+      console.info("Simson: requested targets via get_targets service");
+    } catch (e) {
+      console.warn("Simson: failed to load targets:", e);
+      this._targetsLoading = false;
+    }
+  }
+
+  _getTargetsByType(type) {
+    return this._targets.filter(t => t.type === type);
+  }
+
+  // ── Incoming call popup overlay ──────────────────────────────────────
+
+  _showIncomingPopup() {
+    this._removePopup();
+    this._showPopup = true;
+
+    const popup = document.createElement("div");
+    popup.id = "simson-incoming-popup";
+    popup.innerHTML = `
+      <style>
+        #simson-incoming-popup {
+          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0,0,0,0.85); z-index: 99999;
+          display: flex; align-items: center; justify-content: center;
+          animation: simson-popup-fade .3s ease;
+          font-family: system-ui, -apple-system, sans-serif;
+        }
+        @keyframes simson-popup-fade { from { opacity: 0; } to { opacity: 1; } }
+        .simson-popup-card {
+          background: #1a1a1a; border: 2px solid #4caf50; border-radius: 20px;
+          padding: 32px 28px; text-align: center; min-width: 280px; max-width: 360px;
+          animation: simson-popup-slide .3s ease;
+          box-shadow: 0 20px 60px rgba(0,0,0,.6); color: #e1e1e1;
+        }
+        @keyframes simson-popup-slide {
+          from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; }
+        }
+        .simson-popup-avatar {
+          width: 72px; height: 72px; background: #2e7d3233; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center; font-size: 36px;
+          margin: 0 auto 14px; animation: simson-pulse-ring 2s infinite;
+        }
+        @keyframes simson-pulse-ring {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(76,175,80,0.4); }
+          50% { box-shadow: 0 0 0 15px rgba(76,175,80,0); }
+        }
+        .simson-popup-caller { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+        .simson-popup-type { font-size: 13px; color: #888; margin-bottom: 24px; }
+        .simson-popup-actions { display: flex; gap: 20px; justify-content: center; }
+        .simson-popup-btn {
+          border: none; border-radius: 50%; width: 64px; height: 64px; font-size: 26px;
+          cursor: pointer; transition: transform .15s, box-shadow .15s;
+          display: flex; align-items: center; justify-content: center; color: #fff;
+        }
+        .simson-popup-btn:active { transform: scale(.90); }
+        .simson-popup-btn-answer { background: #2e7d32; box-shadow: 0 4px 20px rgba(46,125,50,.4); }
+        .simson-popup-btn-answer:hover { box-shadow: 0 4px 30px rgba(46,125,50,.6); }
+        .simson-popup-btn-decline { background: #b71c1c; box-shadow: 0 4px 20px rgba(183,28,28,.4); }
+        .simson-popup-btn-decline:hover { box-shadow: 0 4px 30px rgba(183,28,28,.6); }
+        .simson-popup-btn-label { font-size: 11px; color: #888; margin-top: 6px; text-align: center; }
+      </style>
+      <div class="simson-popup-card">
+        <div class="simson-popup-avatar">\u{1F4DE}</div>
+        <div class="simson-popup-caller">${this._escapeHtml(this._incomingFrom)}</div>
+        <div class="simson-popup-type">Incoming ${this._escapeHtml(this._incomingCallType)} call</div>
+        <div class="simson-popup-actions">
+          <div>
+            <button class="simson-popup-btn simson-popup-btn-decline" id="popup-decline">\u274C</button>
+            <div class="simson-popup-btn-label">Decline</div>
+          </div>
+          <div>
+            <button class="simson-popup-btn simson-popup-btn-answer" id="popup-answer">\u{1F4DE}</button>
+            <div class="simson-popup-btn-label">Answer</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(popup);
+    this._popupEl = popup;
+
+    popup.querySelector("#popup-answer")?.addEventListener("click", () => {
+      this._answer();
+      this._removePopup();
+    });
+    popup.querySelector("#popup-decline")?.addEventListener("click", () => {
+      this._reject();
+      this._removePopup();
+    });
+  }
+
+  _removePopup() {
+    this._showPopup = false;
+    if (this._popupEl) {
+      this._popupEl.remove();
+      this._popupEl = null;
+    }
+    // Also remove by ID in case element reference was lost.
+    document.getElementById("simson-incoming-popup")?.remove();
+  }
+
+  // ── Browser Notification API ─────────────────────────────────────────
+
+  async _requestNotificationPermission() {
+    if (typeof Notification === "undefined") return;
+    try {
+      const perm = await Notification.requestPermission();
+      this._notifPermission = perm;
+      console.info("Simson: notification permission:", perm);
+      this._render();
+    } catch (e) {
+      console.warn("Simson: notification permission request failed:", e);
+    }
+  }
+
+  _showBrowserNotification(caller, callType) {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    this._dismissBrowserNotification();
+    try {
+      this._activeNotification = new Notification("Incoming Call", {
+        body: `\u{1F4DE} ${caller} — ${callType} call`,
+        icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2303a9f4'%3E%3Cpath d='M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z'/%3E%3C/svg%3E",
+        tag: "simson-incoming-call",
+        requireInteraction: true,
+      });
+      this._activeNotification.onclick = () => {
+        window.focus();
+        this._activeNotification.close();
+      };
+    } catch (e) {
+      console.warn("Simson: browser notification failed:", e);
+    }
+  }
+
+  _dismissBrowserNotification() {
+    if (this._activeNotification) {
+      this._activeNotification.close();
+      this._activeNotification = null;
+    }
+  }
+
   // ── Render ───────────────────────────────────────────────────────────
 
   _root() { return this.shadowRoot; }
@@ -673,7 +976,10 @@ class SimsonCard extends HTMLElement {
     const isIncoming = callState === "incoming";
     const isRinging  = callState === "requesting" || callState === "ringing";
     const isActive   = callState === "active";
-    const hasCall    = !isIdle;
+    const isMissed   = callState === "missed";
+    const isDeclined = callState === "declined";
+    const isTimeout  = callState === "timeout";
+    const hasCall    = !isIdle && !isMissed && !isDeclined && !isTimeout;
     const hasWebRTC  = !!this._pc;
 
     const remoteLabel = this._activeCallAttr("remote_label") ||
@@ -696,15 +1002,21 @@ class SimsonCard extends HTMLElement {
       console.info("Simson: state transition %s → %s (direction=%s, callId=%s)", prev, callState, direction, callId);
 
       if (callState === "incoming" && prev === "idle") {
-        // Incoming call — start ringtone.
+        // Incoming call — start ringtone and show popup.
         this._currentCallId = callId;
         this._currentRemoteNode = this._activeCallAttr("remote_node_id", "");
         this._polite = (this._config.node_id || "") < (this._currentRemoteNode || "");
+        this._incomingFrom = this._activeCallAttr("remote_label") || this._currentRemoteNode || "Unknown";
+        this._incomingCallType = this._activeCallAttr("call_type") || "voice";
         this._playRingtone();
+        this._showIncomingPopup();
+        this._showBrowserNotification(this._incomingFrom, this._incomingCallType);
 
       } else if (callState === "active" && prev !== "active") {
         // Call became active — kick off WebRTC if event-driven path didn't already.
         this._stopRingtone();
+        this._removePopup();
+        this._dismissBrowserNotification();
         this._currentCallId = callId;
         this._currentRemoteNode = this._activeCallAttr("remote_node_id", "");
         this._polite = (this._config.node_id || "") < (this._currentRemoteNode || "");
@@ -714,6 +1026,8 @@ class SimsonCard extends HTMLElement {
       } else if (callState === "idle" && prev !== "idle") {
         // Call ended — tear down WebRTC.
         this._stopRingtone();
+        this._removePopup();
+        this._dismissBrowserNotification();
         this._cleanupWebRTC();
         this._callStart = null;
         this._currentCallId = null;
@@ -787,8 +1101,15 @@ class SimsonCard extends HTMLElement {
         ${callPanelHtml}
 
         ${isIdle ? `
+        ${this._notifPermission === "default" && typeof Notification !== "undefined" ? `
+        <div class="notif-banner">
+          <span>\u{1F514} Enable notifications to get alerted when someone calls you.</span>
+          <button id="btn-notif-perm">Enable</button>
+        </div>` : ""}
+
         <div class="dial-section">
-          <div class="dial-label">Dial</div>
+          <div class="dial-label">Call</div>
+          ${this._renderTargetPicker(connected)}
           ${this._config.target_nodes.length ? `
           <div class="quick-dial">
             ${this._config.target_nodes.map(n => `
@@ -830,6 +1151,7 @@ class SimsonCard extends HTMLElement {
     root.querySelector("#btn-reject")?.addEventListener("click", () => this._reject());
     root.querySelector("#btn-hangup")?.addEventListener("click", () => this._hangup());
     root.querySelector("#btn-mute")?.addEventListener("click", () => this._toggleMute());
+    root.querySelector("#btn-notif-perm")?.addEventListener("click", () => this._requestNotificationPermission());
 
     // Quick-dial buttons.
     root.querySelectorAll(".btn-quick-dial").forEach(btn => {
@@ -839,6 +1161,19 @@ class SimsonCard extends HTMLElement {
           this._currentRemoteNode = target;
           this._callStart = null;
           this._callService("make_call", { target_node_id: target, call_type: "voice" });
+        }
+      });
+    });
+
+    // Target picker buttons (from addon config targets).
+    root.querySelectorAll(".btn-target").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const targetId = btn.dataset.targetId;
+        const targetType = btn.dataset.targetType;
+        if (targetId) {
+          this._currentRemoteNode = btn.dataset.nodeId || targetId;
+          this._callStart = null;
+          this._callService("make_call", { target_id: targetId, call_type: targetType === "asterisk" ? "sip" : "voice" });
         }
       });
     });
@@ -854,6 +1189,41 @@ class SimsonCard extends HTMLElement {
     }
 
     if (isActive) this._updateTimer();
+  }
+
+  _renderTargetPicker(connected) {
+    if (!this._targetsLoaded || this._targets.length === 0) return "";
+
+    const icons = { node: "\u{1F3E0}", device: "\u{1F4F1}", asterisk: "\u{1F4DE}", queue: "\u{1F465}" };
+    const labels = { node: "Nodes", device: "Devices", asterisk: "Asterisk", queue: "Queues" };
+    const types = ["node", "device", "asterisk", "queue"];
+
+    let html = '<div class="target-section">';
+    for (const type of types) {
+      const targets = this._getTargetsByType(type);
+      if (targets.length === 0) continue;
+      html += `
+        <div class="target-category">
+          <div class="target-category-header">
+            <span class="target-category-icon">${icons[type] || "\u{1F4CC}"}</span>
+            ${labels[type] || type}
+          </div>
+          <div class="target-grid">
+            ${targets.map(t => `
+              <button class="btn-target type-${this._escapeHtml(type)}"
+                data-target-id="${this._escapeHtml(t.id)}"
+                data-target-type="${this._escapeHtml(type)}"
+                data-node-id="${this._escapeHtml(t.node_id || t.id)}"
+                ${!connected ? "disabled" : ""}>
+                <span class="target-icon">${this._escapeHtml(t.icon) || icons[type] || "\u{1F4CC}"}</span>
+                <span class="target-label">${this._escapeHtml(t.label || t.id)}</span>
+              </button>
+            `).join("")}
+          </div>
+        </div>`;
+    }
+    html += "</div>";
+    return html;
   }
 
   _updateTimer() {

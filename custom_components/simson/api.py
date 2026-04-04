@@ -49,11 +49,14 @@ class SimsonApiClient:
     async def calls(self) -> dict:
         return await self._get("/api/calls")
 
-    async def make_call(self, target_node_id: str, call_type: str = "voice") -> dict:
-        return await self._post("/api/call", {
-            "target_node_id": target_node_id,
-            "call_type": call_type,
-        })
+    async def make_call(self, target_node_id: str = "", call_type: str = "voice",
+                        target_id: str = "") -> dict:
+        data = {"call_type": call_type}
+        if target_id:
+            data["target_id"] = target_id
+        if target_node_id:
+            data["target_node_id"] = target_node_id
+        return await self._post("/api/call", data)
 
     async def answer_call(self, call_id: str) -> dict:
         return await self._post("/api/answer", {"call_id": call_id})
@@ -63,6 +66,9 @@ class SimsonApiClient:
 
     async def hangup_call(self, call_id: str) -> dict:
         return await self._post("/api/hangup", {"call_id": call_id})
+
+    async def targets(self) -> dict:
+        return await self._get("/api/targets")
 
     async def webrtc_signal(
         self,

@@ -22,6 +22,7 @@ SERVICE_ANSWER_CALL = "answer_call"
 SERVICE_REJECT_CALL = "reject_call"
 SERVICE_HANGUP_CALL = "hangup_call"
 SERVICE_WEBRTC_SIGNAL = "send_webrtc_signal"
+SERVICE_GET_TARGETS = "get_targets"
 
 # WebRTC event
 EVENT_WEBRTC_SIGNAL = "simson_webrtc_signal"

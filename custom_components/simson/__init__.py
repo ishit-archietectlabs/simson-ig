@@ -25,6 +25,7 @@ from .const import (
     SERVICE_REJECT_CALL,
     SERVICE_HANGUP_CALL,
     SERVICE_WEBRTC_SIGNAL,
+    SERVICE_GET_TARGETS,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Unregister services when last entry is removed.
         if not hass.data[DOMAIN]:
             for svc in (SERVICE_MAKE_CALL, SERVICE_ANSWER_CALL, SERVICE_REJECT_CALL,
-                        SERVICE_HANGUP_CALL, SERVICE_WEBRTC_SIGNAL):
+                        SERVICE_HANGUP_CALL, SERVICE_WEBRTC_SIGNAL, SERVICE_GET_TARGETS):
                 hass.services.async_remove(DOMAIN, svc)
     return unload_ok
 
@@ -119,10 +120,15 @@ def _register_services(hass: HomeAssistant, client: SimsonApiClient) -> None:
     """Register Simson services."""
 
     async def handle_make_call(call: ServiceCall) -> None:
-        target = call.data["target_node_id"]
+        target = call.data.get("target_node_id", "")
+        target_id = call.data.get("target_id", "")
         call_type = call.data.get("call_type", "voice")
         try:
-            result = await client.make_call(target, call_type)
+            result = await client.make_call(
+                target_node_id=target,
+                call_type=call_type,
+                target_id=target_id,
+            )
             logger.info("Call initiated: %s", result)
         except Exception as err:
             logger.error("Failed to make call: %s", err)
@@ -155,7 +161,8 @@ def _register_services(hass: HomeAssistant, client: SimsonApiClient) -> None:
             SERVICE_MAKE_CALL,
             handle_make_call,
             schema=vol.Schema({
-                vol.Required("target_node_id"): str,
+                vol.Optional("target_node_id", default=""): str,
+                vol.Optional("target_id", default=""): str,
                 vol.Optional("call_type", default="voice"): str,
             }),
         )
@@ -206,4 +213,19 @@ def _register_services(hass: HomeAssistant, client: SimsonApiClient) -> None:
                 vol.Required("signal_type"): str,
                 vol.Required("data"): dict,
             }),
+        )
+
+    async def handle_get_targets(call: ServiceCall) -> None:
+        try:
+            result = await client.targets()
+            # Fire an event with the result so the card can receive it.
+            hass.bus.async_fire("simson_targets_result", result)
+        except Exception as err:
+            logger.error("Failed to get targets: %s", err)
+
+    if not hass.services.has_service(DOMAIN, SERVICE_GET_TARGETS):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_GET_TARGETS,
+            handle_get_targets,
         )
